@@ -1,0 +1,533 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "CloudFormation template for Data collection lambda and s3 bucket",
+  "Metadata": {},
+  "Parameters": {
+    "BillingEnvironmentName": {
+      "AllowedPattern": "[a-zA-Z0-9]*",
+      "Default": "dev",
+      "Description": "The target environment in which the stack is being created",
+      "MinLength": 2,
+      "Type": "String"
+    }
+  },
+  "Mappings": {
+    "General": {
+      "Constants": {
+        "FinanceActivityId": "8001",
+        "FinanceEntityId": "0092",
+        "FinanceManagementCentreId": "99450",
+        "JiraProjectCode": "CSS",
+        "PmProgramme": "digital transformation",
+        "ServiceName": "PPSLambda",
+        "PmProjectCode": "PRJ0093"
+      }
+    },
+    "Accounts": {
+      "915203318988": {
+        "Description": "The rxplatformrefresh account (dev)",
+        "DnsSecurityGroup": "sg-16b49672",
+        "IdentityPrivateSubnetIds": [
+          "subnet-06391c5f",
+          "subnet-98b357fc"
+        ],
+        "VpcId": "vpc-16cffc73",
+        "ElasticBambooInstanceRoleArn": "arn:aws:iam::915203318988:role/ElasticBambooInstanceProfile-ElasticBambooRole-AFSD3M8F5JAI",
+        "CodeBucketPrefix": ""
+      },
+      "324811521787": {
+        "Description": "The rxpreprod account (preprod)",
+        "DnsSecurityGroup": "sg-57344b2e",
+        "IdentityPrivateSubnetIds": [
+          "subnet-5b95ed3f",
+          "subnet-ca3244bc"
+        ],
+        "VpcId": "vpc-17a5c073",
+        "ElasticBambooInstanceRoleArn": "",
+        "CodeBucketPrefix": "preprod"
+      },
+      "612155760304": {
+        "Description": "The rxprod account (prod)",
+        "DnsSecurityGroup": "sg-eff44e89",
+        "IdentityPrivateSubnetIds": [
+          "subnet-60732004",
+          "subnet-0ba8e37d"
+        ],
+        "VpcId": "vpc-893943ed",
+        "ElasticBambooInstanceRoleArn": "",
+        "CodeBucketPrefix": "prod"
+      }
+    }
+  },
+  "Conditions": {
+    "IsRxPlatformRefresh": {
+      "Fn::Equals": [
+        {
+          "Ref": "AWS::AccountId"
+        },
+        "915203318988"
+      ]
+    },
+    "IsNotRxPlatformRefresh": {
+      "Fn::Not": [
+        {
+          "Condition": "IsRxPlatformRefresh"
+        }
+      ]
+    },
+    "CreateDeploymentRole": {
+      "Condition": "IsRxPlatformRefresh"
+    },
+    "CreateDeploymentUser": {
+      "Fn::Not": [
+        {
+          "Condition": "CreateDeploymentRole"
+        }
+      ]
+    }
+  },
+  "Resources": {
+    "PPSLambdaRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "Service": [
+                  "lambda.amazonaws.com"
+                ]
+              },
+              "Action": [
+                "sts:AssumeRole"
+              ]
+            }
+          ]
+        },
+        "Path": "/",
+        "Policies": [
+          {
+            "PolicyName": "PPSLambdaS3Access",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "s3:ListBucket",
+                    "s3:GetObject",
+                    "s3:PutObject",
+                    "s3:PutBucketCORS",
+                    "s3:DeleteObject"
+                  ],
+                  "Resource": [
+                    {
+                      "Fn::ImportValue": {"Fn::Sub": "ratboxdatabucket-${BillingEnvironmentName}-arn"}
+                    },
+                    {
+                      "Fn::Join": [
+                        "",
+                        [
+                          {
+                            "Fn::ImportValue": {"Fn::Sub": "ratboxdatabucket-${BillingEnvironmentName}-arn"}
+                          },
+                          "/*"
+                        ]
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          {
+            "PolicyName": "PPSLambdaCloudFormationAccess",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "cloudwatch:PutMetricData"
+                  ],
+                  "Resource": "*"
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "logs:CreateLogGroup",
+                    "logs:CreateLogStream",
+                    "logs:DescribeLogGroups",
+                    "logs:DescribeLogStreams",
+                    "logs:PutLogEvents"
+                  ],
+                  "Resource": "*"
+                }
+              ]
+            }
+          },
+          {
+            "PolicyName": "PPSLambdaNetworkInterfacePolicy",
+            "PolicyDocument": {
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "ec2:CreateNetworkInterface",
+                    "ec2:DeleteNetworkInterface",
+                    "ec2:DescribeNetworkInterfaces"
+                  ],
+                  "Resource": "*"
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "PPSLambdaSecurityGroup": {
+      "Type": "AWS::EC2::SecurityGroup",
+      "Properties": {
+        "GroupDescription": "Security group to allow communication from Lambda to Policebox and Royalbox",
+        "SecurityGroupEgress": [
+          {
+            "CidrIp": "0.0.0.0/0",
+            "FromPort": 443,
+            "IpProtocol": "tcp",
+            "ToPort": 443
+          }
+        ],
+        "VpcId": {
+          "Fn::FindInMap": [
+            "Accounts",
+            {
+              "Ref": "AWS::AccountId"
+            },
+            "VpcId"
+          ]
+        },
+        "Tags": [
+          {
+            "Key": "rx:billing:finance-activity-id",
+            "Value": {
+              "Fn::FindInMap": [
+                "General",
+                "Constants",
+                "FinanceActivityId"
+              ]
+            }
+          },
+          {
+            "Key": "rx:billing:finance-entity-id",
+            "Value": {
+              "Fn::FindInMap": [
+                "General",
+                "Constants",
+                "FinanceEntityId"
+              ]
+            }
+          },
+          {
+            "Key": "rx:billing:finance-management-centre-id",
+            "Value": {
+              "Fn::FindInMap": [
+                "General",
+                "Constants",
+                "FinanceManagementCentreId"
+              ]
+            }
+          },
+          {
+            "Key": "rx:billing:jira-project-code",
+            "Value": {
+              "Fn::FindInMap": [
+                "General",
+                "Constants",
+                "JiraProjectCode"
+              ]
+            }
+          },
+          {
+            "Key": "rx:billing:pm-programme",
+            "Value": {
+              "Fn::FindInMap": [
+                "General",
+                "Constants",
+                "PmProgramme"
+              ]
+            }
+          },
+          {
+            "Key": "rx:billing:service-name",
+            "Value": {
+              "Fn::FindInMap": [
+                "General",
+                "Constants",
+                "ServiceName"
+              ]
+            }
+          },
+          {
+            "Key": "rx:billing:pm-project-code",
+            "Value": {
+              "Fn::FindInMap": [
+                "General",
+                "Constants",
+                "PmProjectCode"
+              ]
+            }
+          },
+          {
+            "Key": "rx:billing:environment-name",
+            "Value": {
+              "Ref": "BillingEnvironmentName"
+            }
+          }
+        ]
+      }
+    },
+    "PPSGlueRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "Service": [
+                  "glue.amazonaws.com"
+                ]
+              },
+              "Action": [
+                "sts:AssumeRole"
+              ]
+            }
+          ]
+        },
+        "ManagedPolicyArns": [
+          "arn:aws:iam::aws:policy/service-role/AWSGlueServiceRole"
+        ],
+        "Policies": [
+          {
+            "PolicyName": "PPSGlueS3Access",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "s3:GetObject",
+                    "s3:PutObject"
+                  ],
+                  "Resource": [
+                    {
+                      "Fn::Join": [
+                        "/",
+                        [
+                          {
+                            "Fn::ImportValue": {"Fn::Sub": "ratboxdatabucket-${BillingEnvironmentName}-arn"}
+                          },
+                          "*"
+                        ]
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "PPSFunction": {
+      "Type": "AWS::Lambda::Function",
+      "DependsOn": [
+        "PPSLambdaSecurityGroup",
+        "PPSLambdaRole"
+      ],
+      "Properties": {
+        "FunctionName": {
+          "Fn::Join": [
+            "_",
+            [
+              "PPSLambda",
+              {
+                "Ref": "BillingEnvironmentName"
+              }
+            ]
+          ]
+        },
+        "Handler": "PPSLambda::PPSLambda.Main::Execute",
+        "Role": {
+          "Fn::GetAtt": [
+            "PPSLambdaRole",
+            "Arn"
+          ]
+        },
+        "Code": {
+          "S3Bucket": {
+            "Fn::If": [
+              "IsRxPlatformRefresh",
+              "ratboxcodebucket",
+              {
+                "Fn::Sub": [
+                  "ratboxcodebucket-${prefix}-${AWS::Region}-${AWS::AccountId}",
+                  {
+                    "prefix": {
+                      "Fn::FindInMap": [
+                        "Accounts",
+                        {
+                          "Ref": "AWS::AccountId"
+                        },
+                        "CodeBucketPrefix"
+                      ]
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "S3Key": "PPSLambda.zip"
+        },
+        "Runtime": "dotnetcore3.1",
+        "Timeout": 900,
+        "MemorySize": 512,
+        "Tags": [
+          {
+            "Key": "rx:billing:finance-activity-id",
+            "Value": {
+              "Fn::FindInMap": [
+                "General",
+                "Constants",
+                "FinanceActivityId"
+              ]
+            }
+          },
+          {
+            "Key": "rx:billing:finance-entity-id",
+            "Value": {
+              "Fn::FindInMap": [
+                "General",
+                "Constants",
+                "FinanceEntityId"
+              ]
+            }
+          },
+          {
+            "Key": "rx:billing:finance-management-centre-id",
+            "Value": {
+              "Fn::FindInMap": [
+                "General",
+                "Constants",
+                "FinanceManagementCentreId"
+              ]
+            }
+          },
+          {
+            "Key": "rx:billing:jira-project-code",
+            "Value": {
+              "Fn::FindInMap": [
+                "General",
+                "Constants",
+                "JiraProjectCode"
+              ]
+            }
+          },
+          {
+            "Key": "rx:billing:pm-programme",
+            "Value": {
+              "Fn::FindInMap": [
+                "General",
+                "Constants",
+                "PmProgramme"
+              ]
+            }
+          },
+          {
+            "Key": "rx:billing:service-name",
+            "Value": {
+              "Fn::FindInMap": [
+                "General",
+                "Constants",
+                "ServiceName"
+              ]
+            }
+          },
+          {
+            "Key": "rx:billing:pm-project-code",
+            "Value": {
+              "Fn::FindInMap": [
+                "General",
+                "Constants",
+                "PmProjectCode"
+              ]
+            }
+          },
+          {
+            "Key": "rx:billing:environment-name",
+            "Value": {
+              "Ref": "BillingEnvironmentName"
+            }
+          }
+        ],
+        "VpcConfig": {
+          "SecurityGroupIds": [
+            {
+              "Ref": "PPSLambdaSecurityGroup"
+            },
+            {
+              "Fn::FindInMap": [
+                "Accounts",
+                {
+                  "Ref": "AWS::AccountId"
+                },
+                "DnsSecurityGroup"
+              ]
+            }
+          ],
+          "SubnetIds": {
+            "Fn::FindInMap": [
+              "Accounts",
+              {
+                "Ref": "AWS::AccountId"
+              },
+              "IdentityPrivateSubnetIds"
+            ]
+          }
+        }
+      }
+    },
+    "PPSTriggerRule": {
+      "Type": "AWS::Events::Rule",
+      "Properties": {
+        "ScheduleExpression": "cron(0 6 ? * * *)",
+        "State": "ENABLED",
+        "Targets": [
+          {
+            "Id": "PPSFunction",
+            "Arn": {
+              "Fn::GetAtt": [
+                "PPSFunction",
+                "Arn"
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "PermissionForEventsToInvokePPSLambda": {
+      "Type": "AWS::Lambda::Permission",
+      "Properties": {
+        "FunctionName": { "Ref": "PPSFunction" },
+        "Action": "lambda:InvokeFunction",
+        "Principal": "events.amazonaws.com",
+        "SourceArn": { "Fn::GetAtt": ["PPSTriggerRule", "Arn"] }
+      }
+    }
+  },
+  "Outputs": {
+  }
+}
