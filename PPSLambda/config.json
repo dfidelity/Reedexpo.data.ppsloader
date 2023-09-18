@@ -1,0 +1,12 @@
+﻿{
+  "splunkKey": "",
+  "splunkUrl": "https://http-inputs-reedexpo.splunkcloud.com/services/collector/event",
+  "policeBoxClientId": "",
+  "policeBoxClientSecret": "",
+  "policeBoxClientCredentials": "",
+  "deployVersion": 0.0,
+  "buildNumber": 0.0,
+  "s3BucketName": "ratboxdatabucket-dev",
+  "ringBoxURL": "ringbox-dev.css.rxweb-dev.com",
+  "royalBoxURL": "royalbox-dev.css.rxweb-dev.com"
+}
